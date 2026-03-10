@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>테트리스</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: #eee;
+    }
+    #container {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+    }
+    canvas {
+      border: 2px solid #444;
+      background: #0f0f1a;
+      display: block;
+    }
+    #sidebar {
+      width: 140px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .panel {
+      background: #16213e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .panel h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+    .panel p {
+      font-size: 24px;
+      font-weight: bold;
+      color: #e94560;
+    }
+    #nextCanvas {
+      display: block;
+      margin: 0 auto;
+    }
+    #message {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.85);
+      border: 2px solid #e94560;
+      border-radius: 12px;
+      padding: 30px 40px;
+      text-align: center;
+      display: none;
+      z-index: 10;
+    }
+    #message h2 { font-size: 28px; margin-bottom: 10px; color: #e94560; }
+    #message p { color: #aaa; margin-bottom: 16px; font-size: 14px; }
+    #message button {
+      background: #e94560;
+      color: white;
+      border: none;
+      padding: 10px 28px;
+      border-radius: 6px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #message button:hover { background: #c73652; }
+    #controls { font-size: 12px; color: #666; line-height: 1.8; }
+    #controls span { color: #aaa; }
+  </style>
+</head>
+<body>
+<div id="container">
+  <canvas id="board" width="300" height="600"></canvas>
+  <div id="sidebar">
+    <div class="panel">
+      <h3>점수</h3>
+      <p id="score">0</p>
+    </div>
+    <div class="panel">
+      <h3>레벨</h3>
+      <p id="level">1</p>
+    </div>
+    <div class="panel">
+      <h3>줄</h3>
+      <p id="lines">0</p>
+    </div>
+    <div class="panel">
+      <h3>다음</h3>
+      <canvas id="nextCanvas" width="120" height="120"></canvas>
+    </div>
+    <div class="panel" id="controls">
+      <span>← →</span> 이동<br>
+      <span>↑</span> 회전<br>
+      <span>↓</span> 빠르게<br>
+      <span>Space</span> 즉시낙하<br>
+      <span>P</span> 일시정지
+    </div>
+  </div>
+</div>
+
+<div id="message">
+  <h2 id="msgTitle">게임 오버</h2>
+  <p id="msgSub">점수: <span id="finalScore">0</span></p>
+  <button onclick="startGame()">다시 시작</button>
+</div>
+
+<script>
+const COLS = 10, ROWS = 20, BLOCK = 30;
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const nextCanvas = document.getElementById('nextCanvas');
+const nextCtx = nextCanvas.getContext('2d');
+
+const COLORS = [
+  null,
+  '#00cfcf', // I - 청록
+  '#f5a623', // O - 주황
+  '#9b59b6', // T - 보라
+  '#3498db', // S - 파랑
+  '#2ecc71', // Z - 초록
+  '#e74c3c', // J - 빨강
+  '#f39c12', // L - 노랑
+];
+
+const SHAPES = [
+  null,
+  [[1,1,1,1]],                          // I
+  [[2,2],[2,2]],                        // O
+  [[0,3,0],[3,3,3]],                    // T
+  [[0,4,4],[4,4,0]],                    // S
+  [[5,5,0],[0,5,5]],                    // Z
+  [[6,0,0],[6,6,6]],                    // J
+  [[0,0,7],[7,7,7]],                    // L
+];
+
+let board, piece, nextPiece, score, level, lines, gameOver, paused, dropInterval, lastTime, animId;
+
+function createBoard() {
+  return Array.from({length: ROWS}, () => Array(COLS).fill(0));
+}
+
+function randomPiece() {
+  const id = Math.floor(Math.random() * 7) + 1;
+  const shape = SHAPES[id].map(r => [...r]);
+  return { id, shape, x: Math.floor(COLS / 2) - Math.floor(shape[0].length / 2), y: 0 };
+}
+
+function rotate(shape) {
+  const rows = shape.length, cols = shape[0].length;
+  return Array.from({length: cols}, (_, c) =>
+    Array.from({length: rows}, (_, r) => shape[rows - 1 - r][c])
+  );
+}
+
+function isValid(shape, ox, oy) {
+  for (let r = 0; r < shape.length; r++) {
+    for (let c = 0; c < shape[r].length; c++) {
+      if (!shape[r][c]) continue;
+      const nx = ox + c, ny = oy + r;
+      if (nx < 0 || nx >= COLS || ny >= ROWS) return false;
+      if (ny >= 0 && board[ny][nx]) return false;
+    }
+  }
+  return true;
+}
+
+function place() {
+  for (let r = 0; r < piece.shape.length; r++)
+    for (let c = 0; c < piece.shape[r].length; c++)
+      if (piece.shape[r][c])
+        board[piece.y + r][piece.x + c] = piece.shape[r][c];
+
+  let cleared = 0;
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (board[r].every(v => v)) {
+      board.splice(r, 1);
+      board.unshift(Array(COLS).fill(0));
+      cleared++;
+      r++;
+    }
+  }
+
+  const pts = [0, 100, 300, 500, 800];
+  score += (pts[cleared] || 0) * level;
+  lines += cleared;
+  level = Math.floor(lines / 10) + 1;
+  dropInterval = Math.max(100, 800 - (level - 1) * 70);
+
+  document.getElementById('score').textContent = score;
+  document.getElementById('level').textContent = level;
+  document.getElementById('lines').textContent = lines;
+
+  piece = nextPiece;
+  nextPiece = randomPiece();
+
+  if (!isValid(piece.shape, piece.x, piece.y)) {
+    gameOver = true;
+    cancelAnimationFrame(animId);
+    document.getElementById('finalScore').textContent = score;
+    document.getElementById('msgTitle').textContent = '게임 오버';
+    document.getElementById('msgSub').innerHTML = '점수: <span id="finalScore">' + score + '</span>';
+    document.getElementById('message').style.display = 'block';
+  }
+
+  drawNext();
+}
+
+function ghostY() {
+  let gy = piece.y;
+  while (isValid(piece.shape, piece.x, gy + 1)) gy++;
+  return gy;
+}
+
+// 수정된 부분 1: 파라미터 순서 및 의미 명확화, x/y 좌표 계산 수정
+function drawBlock(ctx, colorIndex, x, y, alpha = 1) {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = COLORS[colorIndex] || '#333';
+  ctx.fillRect(x * BLOCK + 1, y * BLOCK + 1, BLOCK - 2, BLOCK - 2);
+  ctx.globalAlpha = 1;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 격자
+  ctx.strokeStyle = '#1a1a2e';
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      ctx.strokeRect(c * BLOCK, r * BLOCK, BLOCK, BLOCK);
+    }
+
+  // 보드
+  // 수정된 부분 2: drawBlock 호출 시 x에는 열(c), y에는 행(r)을 전달
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (board[r][c]) drawBlock(ctx, board[r][c], c, r); 
+
+  // 고스트
+  if (!gameOver && !paused) {
+    const gy = ghostY();
+    for (let r = 0; r < piece.shape.length; r++)
+      for (let c = 0; c < piece.shape[r].length; c++)
+        if (piece.shape[r][c]) {
+          ctx.globalAlpha = 0.2;
+          ctx.fillStyle = COLORS[piece.shape[r][c]];
+          ctx.fillRect((piece.x + c) * BLOCK + 1, (gy + r) * BLOCK + 1, BLOCK - 2, BLOCK - 2);
+          ctx.globalAlpha = 1;
+        }
+  }
+
+  // 현재 조각
+  // 수정된 부분 3: 현재 조각을 그릴 때도 x, y 좌표를 정확히 전달
+  if (!gameOver) {
+    for (let r = 0; r < piece.shape.length; r++)
+      for (let c = 0; c < piece.shape[r].length; c++)
+        if (piece.shape[r][c])
+          drawBlock(ctx, piece.shape[r][c], piece.x + c, piece.y + r);
+  }
+}
+
+function drawNext() {
+  nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+  const s = nextPiece.shape;
+  const bx = Math.floor((4 - s[0].length) / 2);
+  const by = Math.floor((4 - s.length) / 2);
+  for (let r = 0; r < s.length; r++)
+    for (let c = 0; c < s[r].length; c++)
+      if (s[r][c]) {
+        nextCtx.fillStyle = COLORS[s[r][c]];
+        nextCtx.fillRect((bx + c) * 28 + 6, (by + r) * 28 + 6, 26, 26);
+      }
+}
+
+let dropAccum = 0;
+function loop(ts) {
+  if (paused || gameOver) return;
+  const dt = ts - (lastTime || ts);
+  lastTime = ts;
+  dropAccum += dt;
+  if (dropAccum >= dropInterval) {
+    if (isValid(piece.shape, piece.x, piece.y + 1)) piece.y++;
+    else place();
+    dropAccum = 0;
+  }
+  draw();
+  animId = requestAnimationFrame(loop);
+}
+
+function startGame() {
+  board = createBoard();
+  score = 0; level = 1; lines = 0; dropInterval = 800;
+  gameOver = false; paused = false; lastTime = 0; dropAccum = 0;
+  piece = randomPiece();
+  nextPiece = randomPiece();
+  document.getElementById('score').textContent = 0;
+  document.getElementById('level').textContent = 1;
+  document.getElementById('lines').textContent = 0;
+  document.getElementById('message').style.display = 'none';
+  cancelAnimationFrame(animId);
+  drawNext();
+  animId = requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown', e => {
+  if (gameOver) return;
+  if (e.key === 'p' || e.key === 'P') {
+    paused = !paused;
+    if (!paused) { lastTime = 0; animId = requestAnimationFrame(loop); }
+    return;
+  }
+  if (paused) return;
+  switch (e.key) {
+    case 'ArrowLeft':
+      if (isValid(piece.shape, piece.x - 1, piece.y)) piece.x--;
+      break;
+    case 'ArrowRight':
+      if (isValid(piece.shape, piece.x + 1, piece.y)) piece.x++;
+      break;
+    case 'ArrowDown':
+      if (isValid(piece.shape, piece.x, piece.y + 1)) { piece.y++; dropAccum = 0; }
+      else place();
+      break;
+    case 'ArrowUp': {
+      const rotated = rotate(piece.shape);
+      if (isValid(rotated, piece.x, piece.y)) piece.shape = rotated;
+      break;
+    }
+    case ' ':
+      e.preventDefault();
+      piece.y = ghostY();
+      place();
+      dropAccum = 0; // 수정된 부분 4: 스페이스바 누른 후 낙하 타이머 초기화
+      break;
+  }
+  draw();
+});
+
+startGame();
+</script>
+</body>
+</html>
