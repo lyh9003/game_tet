@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init:*)",
+      "Bash(git config:*)",
+      "Bash(git commit:*)",
+      "Bash(gh api:*)",
+      "Bash(mv tetris.html index.html && git add -A && git commit -m \"Rename tetris.html to index.html for GitHub Pages\" && git push)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
+}
